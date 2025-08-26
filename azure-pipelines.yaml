@@ -1,38 +1,66 @@
-trigger:
-- feature/devops-pipeline
+stages:
+- stage: Build
+  displayName: Build Application
+  jobs:
+  - job: BuildJob
+    pool:
+      vmImage: 'windows-latest' 
 
-pool:
-  vmImage: 'windows-latest'
+    steps:
+    - task: DotNetCoreCLI@2
+      displayName: 'Restore NuGet packages'
+      inputs:
+        command: 'restore'
+        projects: '**/*.csproj'
 
-steps:
-- task: DotNetCoreCLI@2
-  displayName: 'Restore NuGet packages'
-  inputs:
-    command: 'restore'
-    projects: '**/*.csproj'
+    - task: DotNetCoreCLI@2
+      displayName: 'Build application'
+      inputs:
+        command: 'build'
+        projects: '**/*.csproj'
+        arguments: '--configuration Release'
 
-- task: DotNetCoreCLI@2
-  displayName: 'Build application'
-  inputs:
-    command: 'build'
-    projects: '**/*.csproj'
-    arguments: '--configuration Release'
+    - task: DotNetCoreCLI@2
+      displayName: 'Run tests'
+      inputs:
+        command: 'test'
+        projects: '**/*Tests.csproj'
 
-- task: DotNetCoreCLI@2
-  displayName: 'Run tests'
-  inputs:
-    command: 'test'
-    projects: '**/*Tests.csproj'
+    - task: DotNetCoreCLI@2
+      displayName: 'Publish application'
+      inputs:
+        command: 'publish'
+        publishWebProjects: true
+        arguments: '--configuration Release --output $(Build.ArtifactStagingDirectory)'
 
-- task: DotNetCoreCLI@2
-  displayName: 'Publish application'
-  inputs:
-    command: 'publish'
-    publishWebProjects: true
-    arguments: '--configuration Release --output $(Build.ArtifactStagingDirectory)'
-
-- task: PublishBuildArtifacts@1
-  displayName: 'Publish Artifacts'
-  inputs:
-    pathToPublish: '$(Build.ArtifactStagingDirectory)'
-    artifactName: 'drop'
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Artifacts'
+      inputs:
+        pathToPublish: '$(Build.ArtifactStagingDirectory)'
+        artifactName: 'drop'
+        
+- stage: Deploy
+  displayName: Deploy to Test App Service
+  dependsOn: Build # Ensures the build stage completes first
+  jobs:
+  - deployment: DeployWebApp
+    displayName: Deploy Web App
+    environment: 'TestAppServiceEnv' # Link to an Azure DevOps environment for approvals/checks
+    pool:
+      vmImage: 'windows-latest' # or 'ubuntu-latest'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: DownloadBuildArtifacts@1
+            displayName: 'Download Build Artifacts'
+            inputs:
+              artifactName: 'drop' # Name of the artifact to download
+              pathToDownload: '$(Pipeline.Workspace)'
+          - task: AzureWebApp@1
+            displayName: 'Deploy Azure App Service'
+            inputs:
+              azureSubscription: 'YourAzureServiceConnection' # Name of your Azure service connection
+              appType: 'webApp' # or 'functionApp', 'webAppLinux', etc.
+              appName: 'YourTestAppServiceName' # Name of your Azure App Service
+              package: '$(Pipeline.Workspace)/drop/**/*.zip' # Path to your published package
